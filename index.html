@@ -1063,6 +1063,8 @@ let _lastMapSig = '';
 let _lastBuildingsFullSig = '';
 let _lastSpendTs = {};
 let _processedBarbHits = {};
+let _processedBankReqs = {};
+let _lastSyncedMerge = new Map();
 let _processedTorpedoes = {};
 let _processedTorpedoImpacts = {};
 let _processedSiloActions = {};
@@ -1958,14 +1960,37 @@ const PERF = {
   maxRatio: Math.min(window.devicePixelRatio || 1, 1.75),
   minRatio: 1.0,
   pixelRatio: Math.min(window.devicePixelRatio || 1, 1.75),
-  acc: 0, frames: 0, cooldown: 0
+  acc: 0, frames: 0, cooldown: 0, shadowsOff: false
 };
+
+const IDLE_CLOCK = new THREE.Clock();
+const SHADOW_HI = 1024, SHADOW_LO = 512, SHADOW_MIN = 256;
+
+function applyShadows(root, cast, receive) {
+  root.traverse(c => {
+    if (!c.isMesh) return;
+    if (c.userData && (c.userData.isHpBar || c.userData.isTuft || c.userData.isOwnerFlag)) return;
+    const m = c.material;
+    const emissiveOn = m && m.emissive && m.emissive.getHex && m.emissive.getHex() !== 0;
+    const noCast = m && (m.transparent || emissiveOn);
+    c.castShadow = cast && !noCast;
+    c.receiveShadow = receive;
+  });
+}
+
+function setShadowSize(size) {
+  const dl = THREE_OBJS.sunLight;
+  if (!dl || !dl.shadow || dl.shadow.mapSize.width === size) return;
+  dl.shadow.mapSize.set(size, size);
+  if (dl.shadow.map) { dl.shadow.map.dispose(); dl.shadow.map = null; }
+}
+function setShadowRes(px) { setShadowSize(px <= 1.0 ? SHADOW_LO : SHADOW_HI); }
 
 const matCache = {};
 function getMat(color, opts = {}) {
   const key = color + JSON.stringify(opts);
   if (!matCache[key]) {
-    matCache[key] = new THREE.MeshPhongMaterial({ color, flatShading: true, ...opts });
+    matCache[key] = new THREE.MeshPhongMaterial({ color, flatShading: true, specular: 0x0a0d12, shininess: 10, ...opts });
     matCache[key].userData.__cached = true;
   }
   return matCache[key];
@@ -2103,11 +2128,23 @@ function initThreeGame() {
   let renderer = THREE_OBJS.menuRenderer;
   renderer.setClearColor(0x1a1a1a, 1);
   renderer.domElement.style.zIndex = '0';
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   scene.fog = new THREE.Fog(0x1a1a1a, 28, 55);
-  scene.add(new THREE.AmbientLight(0xe9eeff, 0.55));
-  const dl = new THREE.DirectionalLight(0xfff1dd, 0.9);
-  dl.position.set(6, 12, 4); scene.add(dl);
+  scene.add(new THREE.AmbientLight(0xe9eeff, 0.40));
+  const dl = new THREE.DirectionalLight(0xfff1dd, 1.05);
+  dl.position.set(midX + 8, 16, midZ + 6);
+  dl.castShadow = true;
+  dl.target.position.set(midX, 0, midZ);
+  dl.shadow.camera.left = -9; dl.shadow.camera.right = 9;
+  dl.shadow.camera.top = 9; dl.shadow.camera.bottom = -9;
+  dl.shadow.camera.near = 1; dl.shadow.camera.far = 40;
+  dl.shadow.bias = -0.0004; dl.shadow.normalBias = 0.02;
+  dl.shadow.mapSize.set(SHADOW_HI, SHADOW_HI);
+  dl.shadow.camera.updateProjectionMatrix();
+  scene.add(dl); scene.add(dl.target);
+  THREE_OBJS.sunLight = dl;
   const fill = new THREE.DirectionalLight(0xbfd4ff, 0.22);
   fill.position.set(-6, 8, -6); scene.add(fill);
   const hl = new THREE.HemisphereLight(0x87CEEB, 0x3E2723, 0.3);
@@ -2196,6 +2233,7 @@ function createTileMesh(x, z, type='grass'){
     group.add(surf);
   }
   group.userData = { tileX: x, tileZ: z, type };
+  group.traverse(c => { if (c.isMesh && !(c.userData && c.userData.isTuft)) c.receiveShadow = true; });
   return group;
 }
 
@@ -3493,25 +3531,41 @@ function createUnitModel(type, playerColor) {
   const armL = new THREE.Mesh(armGeo, bodyMat); armL.position.set(-0.04, 0.06, 0); g.add(armL);
   const armR = new THREE.Mesh(armGeo, bodyMat); armR.position.set(0.04, 0.06, 0); g.add(armR);
   if (type === 'infantry') {
+    const plume = new THREE.Mesh(getGeo('box', 0.008, 0.03, 0.028), getMat(0xC62828));
+    plume.position.set(0, 0.152, 0);
+    g.add(plume);
     const sword = new THREE.Mesh(getGeo('box', 0.008, 0.07, 0.008), getMat(0x9E9E9E));
     sword.position.set(0.05, 0.08, 0);
     g.add(sword);
+    const guard = new THREE.Mesh(getGeo('box', 0.022, 0.006, 0.008), getMat(0x795548));
+    guard.position.set(0.05, 0.055, 0);
+    g.add(guard);
+    const pommel = new THREE.Mesh(getGeo('sphere', 0.006, 5, 4), getMat(0xFFC107));
+    pommel.position.set(0.05, 0.048, 0);
+    g.add(pommel);
     const shield = new THREE.Mesh(getGeo('box', 0.03, 0.045, 0.008), getMat(0x8D6E63));
     shield.position.set(-0.05, 0.06, 0.008);
     g.add(shield);
-    const boss = new THREE.Mesh(getGeo('box', 0.012, 0.012, 0.006), getMat(0xBDBDBD));
-    boss.position.set(-0.05, 0.06, 0.013);
-    g.add(boss);
+    const emblem = new THREE.Mesh(getGeo('box', 0.014, 0.014, 0.004), bodyMat);
+    emblem.position.set(-0.05, 0.06, 0.016);
+    g.add(emblem);
   } else {
-    const bow1 = new THREE.Mesh(getGeo('cyl', 0.005, 0.005, 0.08, 4), getMat(CFG.colors.trunk));
-    bow1.position.set(0.05, 0.08, 0);
-    bow1.rotation.z = 0.2;
-    g.add(bow1);
+    const hood = new THREE.Mesh(getGeo('cone', 0.026, 0.03, 6), getMat(0x2E7D32));
+    hood.position.set(0, 0.13, 0);
+    g.add(hood);
+    const bowMat = getMat(CFG.colors.trunk);
+    const bowGeo = getGeo('cyl', 0.004, 0.004, 0.032, 4);
+    const bT = new THREE.Mesh(bowGeo, bowMat); bT.position.set(0.055, 0.11, 0); bT.rotation.z = 0.5; g.add(bT);
+    const bM = new THREE.Mesh(bowGeo, bowMat); bM.position.set(0.06, 0.08, 0); g.add(bM);
+    const bB = new THREE.Mesh(bowGeo, bowMat); bB.position.set(0.055, 0.05, 0); bB.rotation.z = -0.5; g.add(bB);
+    const string = new THREE.Mesh(getGeo('box', 0.002, 0.075, 0.002), getMat(0xE0E0E0));
+    string.position.set(0.05, 0.08, 0);
+    g.add(string);
     const quiver = new THREE.Mesh(getGeo('cyl', 0.012, 0.012, 0.05, 5), getMat(0x5D4037));
     quiver.position.set(-0.02, 0.075, -0.022);
     quiver.rotation.x = 0.25;
     g.add(quiver);
-    const arrows = new THREE.Mesh(getGeo('box', 0.014, 0.03, 0.014), getMat(0xCFD8DC));
+    const arrows = new THREE.Mesh(getGeo('box', 0.014, 0.03, 0.014), getMat(0xC62828));
     arrows.position.set(-0.02, 0.105, -0.025);
     arrows.rotation.x = 0.25;
     g.add(arrows);
@@ -4262,6 +4316,20 @@ function countBuildings(type) {
   return GS.buildings.filter(b => b.type === type && (GS.isSolo ? b.owner === GS.playerId : true)).length;
 }
 
+function rollbackFailedBuild(building) {
+  const idx = GS.buildings.indexOf(building);
+  if (idx === -1) return;
+  GS.buildings.splice(idx, 1);
+  if (building.mesh) { disposeMeshTree(building.mesh); THREE_OBJS.buildingGroup.remove(building.mesh); }
+  if (!GS.isSolo && firebaseRef && GS.gameCode) { try { firebaseRef.child(GS.gameCode).child('buildings').child(building.id).remove(); } catch(e){} }
+  rebuildDepotCells();
+  rebuildWarehouseMerge();
+  updateTechVisibility();
+  updateUI();
+  playSound('error');
+  showNotif('Not enough resources');
+}
+
 function placeBuilding(type, x, z) {
   const b = BUILDINGS[type];
   if (!canPlaceBuilding(type, x, z)) { playSound('error'); return; }
@@ -4269,9 +4337,6 @@ function placeBuilding(type, x, z) {
   let _bcost = buildingCostFor(type);
   let _free = false;
   if (GS.freeBuilds && GS.freeBuilds[type] > 0) _free = true;
-  if (!_free && !(GS.creative && GS.isSolo)) {
-    if (!spendShared(_bcost, 0, b.costScience || 0)) { playSound('error'); return; }
-  }
   const building = {
     id: 'b_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
     type, x, z,
@@ -4289,6 +4354,9 @@ function placeBuilding(type, x, z) {
   if (type === 'depot') {
     building.held = {wheat:0,coal:0,stone:0,science:0};
   }
+  if (!_free && !(GS.creative && GS.isSolo)) {
+    if (!spendShared(_bcost, 0, b.costScience || 0, ok => { if (!ok) rollbackFailedBuild(building); })) { playSound('error'); return; }
+  }
   GS.buildings.push(building);
   if (_free && GS.freeBuilds) {
     if (GS.isSolo) {
@@ -4302,9 +4370,9 @@ function placeBuilding(type, x, z) {
           const fb = Object.assign({ warehouse: 0, depot: 0, farm: 0 }, s.freeBuilds);
           if (fb[type] > 0) { fb[type] -= 1; return Object.assign({}, s, { freeBuilds: fb }); }
           const cg = s.gold || 0, csci = s.science || 0;
-          if (cg < _bcost || csci < (b.costScience || 0)) return Object.assign({}, s, { freeBuilds: fb });
+          if (cg < _bcost || csci < (b.costScience || 0)) return;
           return Object.assign({}, s, { freeBuilds: fb, gold: cg - _bcost, science: csci - (b.costScience || 0) });
-        }, () => { _pendingFreeBuildChange = 0; });
+        }, (err, committed) => { _pendingFreeBuildChange = 0; if (err || !committed) rollbackFailedBuild(building); });
       } catch (e) {}
     }
   }
@@ -4428,6 +4496,8 @@ function renderBuilding(building, animate = false) {
     model.matrixAutoUpdate = false;
     model.updateMatrix();
   }
+  model.userData.idlePhase = Math.random() * Math.PI * 2;
+  applyShadows(model, true, true);
   THREE_OBJS.buildingGroup.add(model);
   building.mesh = model;
   if (building.type === 'warehouse' || building.type === 'depot') {
@@ -4566,6 +4636,18 @@ function rebuildWarehouseMerge(){
       }
     }
     allGroups.push(group);
+  }
+  if (auth && !GS.isSolo && firebaseRef && GS.gameCode) {
+    for (const group of allGroups) {
+      for (const m of group) {
+        if (_recentlyDeletedBuildings.has(m.id)) continue;
+        const sigKey = (m.mergeRoot || m.id) + ':' + (m.cap || 0);
+        if (_lastSyncedMerge.get(m.id) !== sigKey) {
+          _lastSyncedMerge.set(m.id, sigKey);
+          firebaseRef.child(GS.gameCode).child('buildings').child(m.id).update({ mergeRoot: m.mergeRoot, cap: m.cap });
+        }
+      }
+    }
   }
   if (auth) _droneStateDirty = true;
   rebuildWarehouseLinks(allGroups);
@@ -5607,6 +5689,8 @@ function renderUnit(unit) {
   model.position.set(unit.x, CFG.tileHeight, unit.z);
   model.userData.unitId = unit.id;
   model.userData.entityType = 'unit';
+  model.userData.idlePhase = Math.random() * Math.PI * 2;
+  applyShadows(model, true, false);
   THREE_OBJS.unitGroup.add(model);
   unit.mesh = model;
 }
@@ -5953,6 +6037,7 @@ function renderBarbarian(barb) {
   model.position.set(barb.x, CFG.tileHeight, barb.z);
   model.userData.barbarianId = barb.id;
   model.userData.entityType = 'barb';
+  applyShadows(model, true, false);
   THREE_OBJS.barbarianGroup.add(model);
   barb.mesh = model;
 }
@@ -7162,10 +7247,16 @@ function onGameClick(event) {
           const c = root.contents || {wheat:0,coal:0,stone:0,science:0};
           const total = (c.wheat||0)+(c.coal||0)+(c.stone||0)+(c.science||0);
           if (total <= 0) { playSound('error'); }
-          else {
+          else if (GS.isSolo || root.owner === GS.playerId) {
             addToTreasury(c);
             root.contents = {wheat:0,coal:0,stone:0,science:0};
             if(!GS.isSolo && firebaseRef && GS.gameCode) firebaseRef.child(GS.gameCode).child('buildings').child(root.id).child('contents').set(root.contents);
+            playSound('gold'); spawnFloatingText('+banked', building.x, CFG.tileHeight+0.5, building.z, '#FFD54F');
+            if (GS.tutorial && GS.tutorial.active) tutorialAdvance('event:warehouseBanked');
+          }
+          else {
+            if (firebaseRef && GS.gameCode) firebaseRef.child(GS.gameCode).child('bankReqs').push({ rootId: root.id, by: GS.playerId, ts: Date.now() });
+            root.contents = {wheat:0,coal:0,stone:0,science:0};
             playSound('gold'); spawnFloatingText('+banked', building.x, CFG.tileHeight+0.5, building.z, '#FFD54F');
             if (GS.tutorial && GS.tutorial.active) tutorialAdvance('event:warehouseBanked');
           }
@@ -7427,6 +7518,10 @@ function openSilo(building) {
   playSound('click');
 }
 function closeSilo() { document.getElementById('barracks-panel').classList.remove('show'); GS.activeSilo = null; }
+function closePanelsForBuilding(id) {
+  if (GS.activeBarracks && GS.activeBarracks.id === id) closeBarracks();
+  if (GS.activeSilo && GS.activeSilo.id === id) closeSilo();
+}
 function startSiloMode(mode) { const silo = GS.activeSilo; document.getElementById('barracks-panel').classList.remove('show'); if (!silo) return; enterSiloTopDownView(silo, mode); }
 function relaySiloAction(kind, x, z) {
   if (!firebaseAvailable || !firebaseRef || !GS.gameCode) { showNotif('Not connected'); playSound('error'); return; }
@@ -7560,6 +7655,7 @@ function renderSubmarine(sub) {
   model.position.set(sub.x, CFG.tileHeight - 0.05, sub.z);
   model.userData.subId = sub.id;
   model.userData.entityType = 'sub';
+  applyShadows(model, true, false);
   THREE_OBJS.unitGroup.add(model);
   sub.mesh = model;
 }
@@ -7813,6 +7909,7 @@ function handleTorpedoImpact(target) {
       if (bld.type === 'mine') disposeMineWorkers(bld);
       GS.buildings = GS.buildings.filter(b => b !== bld);
       if (bld.owner === GS.playerId) _recentlyDeletedBuildings.set(bld.id, Date.now());
+      closePanelsForBuilding(bld.id);
       renderAllBuildings();
       addShared(refund, 0, 0);
       playSound('attack');
@@ -8047,7 +8144,7 @@ let _mpPruneTimer = null;
 
 function pruneProcessedMaps() {
   const cutoff = Date.now() - 60000;
-  [_processedTorpedoes, _processedTorpedoImpacts, _processedSiloActions, _processedPings, _processedLaunches, _processedFx, _processedBarbHits, _processedShifts, _processedEvents].forEach(m => {
+  [_processedTorpedoes, _processedTorpedoImpacts, _processedSiloActions, _processedPings, _processedLaunches, _processedFx, _processedBarbHits, _processedBankReqs, _processedShifts, _processedEvents].forEach(m => {
     for (const k in m) { if (m[k] < cutoff) delete m[k]; }
   });
   const delCutoff = Date.now() - 2000;
@@ -8192,7 +8289,7 @@ function broadcastFx(kind, text, x, y, z, color) {
 function listenForMultiplayerUpdates() {
   if (GS.isSolo || !firebaseInited) return;
   cleanupFirebaseListeners();
-  _lastSpendTs = {}; _spendBaselineSet = false; _lastMapSig = ''; _lastBuildingsSig = ''; _lastBuildingsFullSig = ''; _lastPlayersUnitsSig = ''; _processedBarbHits = {}; _processedTorpedoes = {}; _processedTorpedoImpacts = {}; _processedSiloActions = {}; _processedPings = {}; _pingBaseline = Date.now(); _lastResearchTs = {}; _researchBaselineSet = false;
+  _lastSpendTs = {}; _spendBaselineSet = false; _lastMapSig = ''; _lastBuildingsSig = ''; _lastBuildingsFullSig = ''; _lastPlayersUnitsSig = ''; _processedBarbHits = {}; _processedBankReqs = {}; _lastSyncedMerge = new Map(); _processedTorpedoes = {}; _processedTorpedoImpacts = {}; _processedSiloActions = {}; _processedPings = {}; _pingBaseline = Date.now(); _lastResearchTs = {}; _researchBaselineSet = false;
   _processedLaunches = {}; _processedFx = {}; _droneSyncT = 0; _workerSyncT = 0; _droneStateDirty = false; _fxBudget = [];
   _processedEvents = {}; _eventsBaseline = Date.now(); EVENTS.timer = 0; EVENTS.next = EVENT_INTERVAL; _eventDroughtUntil = 0;
   if (_mpPruneTimer) clearInterval(_mpPruneTimer);
@@ -8269,6 +8366,8 @@ function listenForMultiplayerUpdates() {
       });
       GS.buildings.forEach(migrateBuilding);
       renderAllBuildings();
+      if (GS.activeBarracks && !GS.buildings.find(b => b.id === GS.activeBarracks.id)) closeBarracks();
+      if (GS.activeSilo && !GS.buildings.find(b => b.id === GS.activeSilo.id)) closeSilo();
       GS.buildings.forEach(b => {
         if (b.type === 'launcher' && b._rocketRespawn > 0 && b.mesh) {
           b.mesh.traverse(c => { if (c.userData && c.userData.isRocket && c.parent) c.parent.remove(c); });
@@ -8321,6 +8420,23 @@ function listenForMultiplayerUpdates() {
       }
       if (whChanged) rebuildWarehouseMerge();
     }
+  });
+
+  addFbListener(firebaseRef.child(GS.gameCode).child('bankReqs'), 'child_added', snap => {
+    const key = snap.key, req = snap.val();
+    if (!req || _processedBankReqs[key]) return;
+    _processedBankReqs[key] = Date.now();
+    const root = GS.buildings.find(b => b.id === req.rootId);
+    if (!root || root.owner !== GS.playerId) return;
+    if (typeof req.ts === 'number' && Date.now() - req.ts <= 8000) {
+      const c = root.contents || {wheat:0,coal:0,stone:0,science:0};
+      if (totalContents(c) > 0) {
+        addToTreasury(c);
+        root.contents = {wheat:0,coal:0,stone:0,science:0};
+        if (firebaseRef && GS.gameCode) firebaseRef.child(GS.gameCode).child('buildings').child(root.id).child('contents').set(root.contents);
+      }
+    }
+    if (firebaseRef && GS.gameCode) firebaseRef.child(GS.gameCode).child('bankReqs').child(key).remove();
   });
 
   addFbListener(firebaseRef.child(GS.gameCode).child('players'), 'value', snap => {
@@ -8734,7 +8850,9 @@ function listenForMultiplayerUpdates() {
     GS.units.forEach(u => { if (u.owner === GS.playerId) { u.x += dx; u.z += dz; u.movingX += dx; u.movingZ += dz; if (u.targetX !== null) u.targetX += dx; if (u.targetZ !== null) u.targetZ += dz; } });
     if (GS.isHost) { const _shiftTok = data.token || null; GS.barbarians.forEach(b => { if (_shiftTok != null && b._seedShiftToken === _shiftTok) { delete b._seedShiftToken; return; } b.x += dx; b.z += dz; }); }
     (GS.subs || []).forEach(s => { s.x += dx; s.z += dz; if (s.mesh) s.mesh.position.set(s.x, CFG.tileHeight - 0.05, s.z); });
-    syncBuildingsToFirebase();
+    if (!GS.isSolo && firebaseRef && GS.gameCode) {
+      GS.buildings.forEach(b => { if (b.owner === GS.playerId && !_recentlyDeletedBuildings.has(b.id)) firebaseRef.child(GS.gameCode).child('buildings').child(b.id).update({ x: b.x, z: b.z }); });
+    }
     syncUnitsToFirebase();
     syncSubsToFirebase();
     if (GS.isHost) syncBarbariansToFirebase();
@@ -8917,8 +9035,8 @@ async function startNewGame() {
   GS.isSolo = false;
 
   try {
-    const existing = await firebaseRef.child(GS.gameCode).once('value');
-    if (existing.exists()) { GS.gameCode = genCode(); }
+    let _codeTries = 0;
+    while (_codeTries < 25 && (await firebaseRef.child(GS.gameCode).once('value')).exists()) { GS.gameCode = genCode(); _codeTries++; }
 
     const mapTiles = generateMap(3, 3, true);
     await firebaseRef.child(GS.gameCode).set({
@@ -9291,6 +9409,7 @@ function migrateBuilding(b) {
 
 function saveSoloGame() {
   if (!GS.isSolo) return;
+  if (GS.creative) return;
   const save = {
     gold: GS.gold, wheat: GS.wheat, science: GS.science, coal: GS.coal, stone: GS.stone, siloExpandCount: GS.siloExpandCount, siloTerraformCount: GS.siloTerraformCount,
     gridPerks: GS.gridPerks || { researchOverdrive: false, droneBoost: false, farmOverdrive: false, weatherShield: false },
@@ -9703,6 +9822,7 @@ function applyEventEffectHost(type) {
         if (v.type === 'mine') disposeMineWorkers(v);
         if (v.type === 'warehouse' && v.drones) v.drones.forEach(disposeDrone);
         if (v.owner === GS.playerId) _recentlyDeletedBuildings.set(v.id, Date.now());
+        closePanelsForBuilding(v.id);
         ids.push(v.id);
       });
       GS.buildings = GS.buildings.filter(b => ids.indexOf(b.id) === -1);
@@ -9905,13 +10025,21 @@ function updateAdaptiveQuality(dt) {
   const avg = PERF.acc / PERF.frames;
   PERF.acc = 0; PERF.frames = 0;
   if (PERF.cooldown > 0) return;
+  const r = THREE_OBJS.renderer;
   if (avg > 22 && PERF.pixelRatio > PERF.minRatio) {
     PERF.pixelRatio = Math.max(PERF.minRatio, PERF.pixelRatio - 0.25);
-    THREE_OBJS.renderer.setPixelRatio(PERF.pixelRatio);
+    r.setPixelRatio(PERF.pixelRatio);
+    setShadowRes(PERF.pixelRatio);
     PERF.cooldown = 4000;
+  } else if (avg > 24 && PERF.pixelRatio <= PERF.minRatio && !PERF.shadowsOff) {
+    setShadowSize(SHADOW_MIN);
+    PERF.shadowsOff = true;
+    PERF.cooldown = 6000;
   } else if (avg <= 17 && PERF.pixelRatio < PERF.maxRatio) {
     PERF.pixelRatio = Math.min(PERF.maxRatio, PERF.pixelRatio + 0.25);
-    THREE_OBJS.renderer.setPixelRatio(PERF.pixelRatio);
+    r.setPixelRatio(PERF.pixelRatio);
+    PERF.shadowsOff = false;
+    setShadowRes(PERF.pixelRatio);
     PERF.cooldown = 8000;
   }
 }
@@ -9978,6 +10106,19 @@ function gameLoop(time) {
   updateAmbient(dt);
   updateWeather(dt);
   updateEvents(dt);
+
+  const _idleT = IDLE_CLOCK.getElapsedTime();
+  for (const _b of GS.buildings) {
+    const m = _b.mesh; if (!m) continue;
+    const ph = m.userData.idlePhase || 0;
+    m.rotation.z = Math.sin(_idleT * 0.8 + ph) * 0.010;
+    m.rotation.x = Math.sin(_idleT * 0.6 + ph * 1.7) * 0.006;
+    if (!m.matrixAutoUpdate) m.updateMatrix();
+  }
+  for (const _u of GS.units) {
+    const m = _u.mesh; if (!m) continue;
+    m.position.y += Math.sin(_idleT * 1.6 + (m.userData.idlePhase || 0)) * 0.004;
+  }
 
   if (GS.hoverHighlight) {
     const tt = (Date.now() - (GS.hoverHighlight.userData.spawnTime || 0)) / 1000;
