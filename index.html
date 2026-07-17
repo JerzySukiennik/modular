@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Modular</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
 :root{--ease-dynamic-spring:cubic-bezier(0.34, 1.56, 0.64, 1);--ease-exit:cubic-bezier(0.4, 0, 1, 1)}
 *{margin:0;padding:0;box-sizing:border-box;outline:none}
@@ -18,12 +21,20 @@ canvas{display:block;position:fixed;top:0;left:0;z-index:0}
 .menu-title{font-size:52px;font-weight:900;text-transform:uppercase;letter-spacing:6px;text-shadow:0 4px 12px rgba(0,0,0,0.5);margin-bottom:40px;color:#fff}
 .menu-subtitle{font-size:14px;color:#aaa;margin-bottom:30px;letter-spacing:2px}
 
-.btn-green{background:#4CAF50;border:3px solid #fff;color:#fff;font-weight:700;text-transform:uppercase;padding:15px 40px;border-radius:8px;cursor:pointer;font-size:16px;transition:all .2s;display:block;width:260px;text-align:center;letter-spacing:2px}
-.btn-green:hover{background:#66BB6A;transform:scale(1.03)}
-.btn-green:active{background:#388E3C;transform:scale(.97)}
+.btn-green{background:linear-gradient(180deg,#5cbb60 0%,#4CAF50 55%,#43a047 100%);border:2px solid rgba(255,255,255,0.95);color:#fff;font-weight:800;text-transform:uppercase;padding:15px 40px;border-radius:12px;cursor:pointer;font-size:16px;transition:transform .18s var(--ease-dynamic-spring),box-shadow .2s ease,filter .2s ease;display:block;width:260px;text-align:center;letter-spacing:3px;box-shadow:0 6px 18px rgba(0,0,0,0.35),0 2px 0 rgba(255,255,255,0.28) inset,0 -3px 8px rgba(0,0,0,0.16) inset}
+.btn-green:hover{filter:brightness(1.08);transform:translateY(-2px);box-shadow:0 11px 26px rgba(0,0,0,0.42),0 2px 0 rgba(255,255,255,0.32) inset}
+.btn-green:active{transform:translateY(1px) scale(.985);filter:brightness(.95);box-shadow:0 3px 10px rgba(0,0,0,0.35),0 -2px 6px rgba(0,0,0,0.2) inset}
 .btn-green.disabled{background:#666;cursor:not-allowed;opacity:.6;transform:none}
 .btn-green+.btn-green{margin-top:15px}
 .btn-small{padding:8px 20px;font-size:13px;width:auto}
+/* --- 2026-07-17 UI polish: focus ring, resource pop, refined display type --- */
+:focus-visible{outline:2px solid rgba(255,255,255,0.85);outline-offset:2px}
+button:focus-visible,.btn-green:focus-visible,.radio-btn:focus-visible,.menu-input:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.island-resources .res-item>span:last-child.res-pop{animation:resPop .6s ease-out}
+@keyframes resPop{0%{color:#FFD54F;text-shadow:0 0 9px rgba(255,213,79,0.85)}100%{color:#fff;text-shadow:none}}
+.menu-title{font-family:'Bebas Neue','Impact','Arial Narrow Bold',sans-serif}
+.menu-subtitle,.game-code,.player-tag,.player-role,.role-picker-label,.settings-row label{font-family:'Space Mono',ui-monospace,monospace}
+@media (prefers-reduced-motion: reduce){.res-item>span:last-child.res-pop{animation:none}.btn-green:hover{transform:none}}
 
 .join-row{display:flex;gap:10px;margin-top:15px;align-items:center}
 .join-row input{background:rgba(255,255,255,0.1);border:2px solid #fff;color:#fff;padding:12px 16px;border-radius:8px;font-size:18px;width:180px;text-align:center;letter-spacing:4px;text-transform:uppercase;font-weight:700}
@@ -1130,10 +1141,40 @@ function initAudio() {
   audioMaster.gain.value = 0.9;
   audioMaster.connect(comp);
   comp.connect(audioCtx.destination);
+  loadSFX();
 }
 
 function audioBus() {
   return audioMaster || audioCtx.destination;
+}
+
+// Real CC0 sound clips (Kenney "Interface Sounds", CC0 1.0) for UI/economy/tech actions.
+// Combat + ambient stay procedurally synthesized below. Missing/failed clips fall back to synth.
+const SFX_FILES = ['click', 'build', 'gold', 'bank', 'harvest', 'tech', 'error', 'discovery', 'festival'];
+const SFX_GAIN = { click: 0.55, build: 0.8, gold: 0.7, bank: 0.7, harvest: 0.7, tech: 0.8, error: 0.7, discovery: 0.75, festival: 0.85 };
+const SFX_BUFFERS = {};
+let _sfxLoadStarted = false;
+function loadSFX() {
+  if (_sfxLoadStarted || !audioCtx) return;
+  _sfxLoadStarted = true;
+  SFX_FILES.forEach(key => {
+    fetch('sounds/' + key + '.mp3')
+      .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('404')))
+      .then(buf => audioCtx.decodeAudioData(buf))
+      .then(decoded => { SFX_BUFFERS[key] = decoded; })
+      .catch(() => {});
+  });
+}
+function playSFX(key) {
+  const buf = SFX_BUFFERS[key];
+  if (!buf) return false;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const g = audioCtx.createGain();
+  g.gain.value = SFX_GAIN[key] != null ? SFX_GAIN[key] : 0.8;
+  src.connect(g); g.connect(audioBus());
+  src.start(0);
+  return true;
 }
 
 function _mkTone(now, type, freq, peak, attack, decay, dest) {
@@ -1169,6 +1210,7 @@ function _mkNoise(now, dur, peak, filterType, filterFreq, filterQ, dest) {
 
 function playSound(type) {
   if (GS.muted || !audioCtx) return;
+  if (playSFX(type)) return;
   try {
     const now = audioCtx.currentTime;
     const dest = audioBus();
@@ -1520,6 +1562,18 @@ function updateResourcesIsland() {
   if (showSci) cHtml += `<span class="res-item"><span class="res-icon">${icon('science')}</span><span>${fmtRes(GS.science)}</span></span>`;
   compact.innerHTML = cHtml;
   const _ri=document.getElementById('island-resources'); const _w=_ri?Math.round(_ri.getBoundingClientRect().width):0; if(_ri&&_ri._lastWidth!==_w){_ri._lastWidth=_w; if(typeof recomputeRightCluster==='function')recomputeRightCluster();}
+  const _rv = showSci ? [GS.gold, GS.wheat, GS.coal, GS.stone, GS.science] : [GS.gold, GS.wheat, GS.coal, GS.stone];
+  if (updateResourcesIsland._last) {
+    const _spans = compact.querySelectorAll('.res-item');
+    _rv.forEach((v, i) => {
+      const prev = updateResourcesIsland._last[i];
+      if (prev != null && v > prev && _spans[i] && _spans[i].lastElementChild) {
+        const s = _spans[i].lastElementChild;
+        s.classList.remove('res-pop'); void s.offsetWidth; s.classList.add('res-pop');
+      }
+    });
+  }
+  updateResourcesIsland._last = _rv;
   const blocks = [
     { k: 'gold', v: GS.gold },
     { k: 'wheat', v: GS.wheat },
@@ -2371,6 +2425,15 @@ function createBuildingModel(type) {
   const g = new THREE.Group();
   switch(type) {
     case 'farm': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('cyl',0.013,0.013,0.1,5),getMat(0x8D6E63),0.24,0.13,0.24).scale.y=2.6;
+        m(getGeo('box',0.2,0.016,0.016),getMat(0x8D6E63),0.24,0.2,0.24);
+        m(getGeo('sphere',0.035,6,5),getMat(0xCDA434),0.24,0.27,0.24);
+        m(getGeo('cyl',0.05,0.05,0.09,8),getMat(0xE0B84C),-0.26,0.05,0.26).rotation.z=Math.PI/2;
+        m(getGeo('cyl',0.05,0.05,0.09,8),getMat(0xE0B84C),-0.26,0.05,0.16).rotation.z=Math.PI/2;
+        m(getGeo('box',0.09,0.06,0.09),getMat(0x8D6E63),-0.24,0.03,-0.24);
+        m(getGeo('sphere',0.03,6,5),getMat(0xE65100),-0.24,0.09,-0.24);
+ }
       const soil = new THREE.Mesh(getGeo('box', 0.7, 0.03, 0.7), getMat(CFG.colors.farmSoil));
       soil.position.y = 0.015;
       soil.userData.isSoil = true;
@@ -2420,6 +2483,13 @@ function createBuildingModel(type) {
       break;
     }
     case 'sawmill': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('box',0.09,0.14,0.012),getMat(0x3E2723),-0.06,0.07,0.151);
+        m(getGeo('box',0.05,0.05,0.012),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0.08,0.16,0.151);
+        m(getGeo('cyl',0.02,0.02,0.12,6),getMat(0x263238),0.1,0.32,-0.08);
+        m(getGeo('sphere',0.03,6,5),getMat(0x9E9E9E,{transparent:true,opacity:0.6,depthWrite:false}),0.1,0.41,-0.08);
+        m(getGeo('cyl',0.06,0.08,0.03,8),getMat(0xCDBE8C),0.1,0.015,0.16);
+ }
       const body = new THREE.Mesh(getGeo('box', 0.3, 0.25, 0.3), getMat(CFG.colors.sawmill));
       body.position.y = 0.125;
       g.add(body);
@@ -2454,6 +2524,16 @@ function createBuildingModel(type) {
       break;
     }
     case 'barracks': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('box',0.1,0.05,0.06),getMat(0x8D8B6E),-0.1,0.025,0.19);
+        m(getGeo('box',0.1,0.05,0.06),getMat(0x8D8B6E),0,0.025,0.2);
+        m(getGeo('box',0.1,0.05,0.06),getMat(0x8D8B6E),0.1,0.025,0.19);
+        m(getGeo('box',0.36,0.03,0.36),getMat(0x37474F),0,0.29,0);
+        m(getGeo('cyl',0.006,0.006,0.05,4),getMat(0x4E342E),-0.09,0.14,0.185);
+        m(getGeo('sphere',0.02,6,5),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),-0.09,0.17,0.185);
+        m(getGeo('cyl',0.006,0.006,0.05,4),getMat(0x4E342E),0.09,0.14,0.185);
+        m(getGeo('sphere',0.02,6,5),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0.09,0.17,0.185);
+ }
       const body = new THREE.Mesh(getGeo('box', 0.35, 0.3, 0.35), getMat(CFG.colors.barracks));
       body.position.y = 0.15;
       g.add(body);
@@ -2481,6 +2561,15 @@ function createBuildingModel(type) {
       break;
     }
     case 'factory': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('sphere',0.05,6,5),getMat(0x9E9E9E,{transparent:true,opacity:0.6,depthWrite:false}),-0.12,0.65,-0.12);
+        m(getGeo('sphere',0.04,6,5),getMat(0x9E9E9E,{transparent:true,opacity:0.6,depthWrite:false}),0.05,0.59,-0.13);
+        m(getGeo('box',0.06,0.06,0.012),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),-0.1,0.22,0.201);
+        m(getGeo('box',0.06,0.06,0.012),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0,0.22,0.201);
+        m(getGeo('box',0.06,0.06,0.012),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0.1,0.22,0.201);
+        m(getGeo('box',0.12,0.06,0.12),getMat(0x757575),0.1,0.4,0.08);
+        m(getGeo('box',0.13,0.012,0.13),getMat(0x424242),0.1,0.43,0.08);
+ }
       const body = new THREE.Mesh(getGeo('box', 0.4, 0.35, 0.4), getMat(CFG.colors.factory));
       body.position.y = 0.175;
       g.add(body);
@@ -2516,6 +2605,13 @@ function createBuildingModel(type) {
       break;
     }
     case 'lab': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('sphere',0.03,8,6),getMat(0x80DEEA,{emissive:0x00E5FF,emissiveIntensity:0.6}),0.176,0.28,0.08);
+        m(getGeo('sphere',0.03,8,6),getMat(0x80DEEA,{emissive:0x00E5FF,emissiveIntensity:0.6}),0.176,0.28,-0.08);
+        m(getGeo('cyl',0.06,0.06,0.1,10),getMat(0xB0BEC5),0.05,0.45,-0.1).rotation.z=Math.PI/2;
+        m(getGeo('cyl',0.022,0.03,0.05,7),getMat(0xF48FB1,{transparent:true,opacity:0.85,emissive:0xF06292,emissiveIntensity:0.4}),0.1,0.45,0.1);
+        m(getGeo('box',0.09,0.14,0.012),getMat(0xECEFF1),0,0.07,0.176);
+ }
       const body = new THREE.Mesh(getGeo('box', 0.35, 0.4, 0.35), getMat(CFG.colors.lab));
       body.position.y = 0.2;
       g.add(body);
@@ -2543,6 +2639,16 @@ function createBuildingModel(type) {
       break;
     }
     case 'launcher': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('cyl',0.06,0.06,0.16,10),getMat(0xECEFF1),0.24,0.08,0.2);
+        m(getGeo('sphere',0.06,10,6,0,Math.PI*2,0,Math.PI/2),getMat(0xECEFF1),0.24,0.16,0.2);
+        m(getGeo('box',0.14,0.08,0.12),getMat(0x607D8B),0.22,0.04,-0.22);
+        m(getGeo('box',0.05,0.03,0.012),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0.22,0.05,-0.16);
+        m(getGeo('cyl',0.008,0.008,0.1,4),getMat(0x455A64),-0.26,0.05,0.24);
+        m(getGeo('sphere',0.02,6,5),getMat(0xFFF9C4,{emissive:0xFFF176,emissiveIntensity:0.7}),-0.26,0.12,0.24);
+        m(getGeo('cyl',0.008,0.008,0.1,4),getMat(0x455A64),-0.26,0.05,-0.24);
+        m(getGeo('sphere',0.02,6,5),getMat(0xFFF9C4,{emissive:0xFFF176,emissiveIntensity:0.7}),-0.26,0.12,-0.24);
+ }
       const baseMat = getMat(0x9E9E9E);
       const trimMat = getMat(0x757575);
       const stoolMat = getMat(0x546E7A);
@@ -2593,6 +2699,13 @@ function createBuildingModel(type) {
       break;
     }
     case 'silo': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('cyl',0.01,0.01,0.08,4),getMat(0x90A4AE),0.28,0.06,0);
+        m(getGeo('sphere',0.03,8,6),getMat(0xFF5252,{emissive:0x661111}),0.28,0.11,0);
+        m(getGeo('cyl',0.33,0.33,0.02,8),getMat(0xF9A825),0,0.028,0);
+        m(getGeo('box',0.1,0.02,0.06),getMat(0x263238),-0.26,0.02,0.12);
+        m(getGeo('box',0.1,0.06,0.1),getMat(0x546E7A),-0.26,0.03,-0.16);
+ }
       const concrete = getMat(0x4E4E4E);
       const lidMat = getMat(0x37474F);
       const lidTrim = getMat(0x263238);
@@ -2609,6 +2722,15 @@ function createBuildingModel(type) {
       break;
     }
     case 'mine': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('box',0.02,0.012,0.4),getMat(0x546E7A),-0.06,0.04,0.2);
+        m(getGeo('box',0.02,0.012,0.4),getMat(0x546E7A),0.06,0.04,0.2);
+        m(getGeo('box',0.14,0.09,0.11),getMat(0x455A64),0,0.1,0.24);
+        m(getGeo('box',0.12,0.04,0.09),getMat(0x1A1A1A),0,0.15,0.24);
+        m(getGeo('cyl',0.025,0.025,0.012,8),getMat(0x263238),-0.06,0.055,0.28).rotation.z=Math.PI/2;
+        m(getGeo('cyl',0.025,0.025,0.012,8),getMat(0x263238),0.06,0.055,0.28).rotation.z=Math.PI/2;
+        m(getGeo('box',0.04,0.05,0.04),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0,0.32,0.04);
+ }
       const woodMat = getMat(0x4E342E);
       const darkMat = getMat(0x263238);
       const coalMat = getMat(0x1A1A1A, { shininess: 60 });
@@ -2629,6 +2751,11 @@ function createBuildingModel(type) {
       break;
     }
     case 'greenhouse': {
+      { const m=(gg,mt,x,y,z,rx)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);if(rx)e.rotation.x=rx;g.add(e);return e;};
+        m(getGeo('box',0.5,0.02,0.5),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0,0.04,0);
+        m(getGeo('cyl',0.05,0.05,0.1,8),getMat(0x455A64),0.3,0.08,0.3);
+        m(getGeo('box',0.1,0.02,0.05),getMat(0xCFD8DC),-0.12,0.31,0,-0.5);
+        m(getGeo('box',0.1,0.02,0.05),getMat(0xCFD8DC),0.12,0.31,0,-0.5); }
       const soil = new THREE.Mesh(getGeo('box', 0.7, 0.03, 0.7), getMat(CFG.colors.farmSoil));
       soil.position.y = 0.015;
       soil.userData.isSoil = true;
@@ -2679,6 +2806,16 @@ function createBuildingModel(type) {
       break;
     }
     case 'market': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('cyl',0.06,0.06,0.13,8),getMat(0x6D4C41),-0.28,0.065,-0.14);
+        m(getGeo('cyl',0.062,0.062,0.012,8),getMat(0x4E342E),-0.28,0.03,-0.14);
+        m(getGeo('cyl',0.062,0.062,0.012,8),getMat(0x4E342E),-0.28,0.1,-0.14);
+        m(getGeo('sphere',0.028,6,5),getMat(0xE53935),0,0.155,0.12);
+        m(getGeo('sphere',0.028,6,5),getMat(0xE53935),0.05,0.155,0.14);
+        m(getGeo('sphere',0.028,6,5),getMat(0xE53935),-0.04,0.155,0.13);
+        m(getGeo('box',0.14,0.06,0.01),getMat(0x4E342E),0,0.28,0.19);
+        m(getGeo('box',0.04,0.05,0.04),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0.3,0.3,0.18);
+ }
       const baseMat = getMat(0x8D6E63);
       const floor = new THREE.Mesh(getGeo('box', 0.7, 0.03, 0.5), baseMat);
       floor.position.y = 0.015; g.add(floor);
@@ -2701,6 +2838,15 @@ function createBuildingModel(type) {
       break;
     }
     case 'bank': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('box',0.16,0.2,0.012),getMat(0x5D4037),0,0.14,0.251);
+        m(getGeo('box',0.008,0.2,0.016),getMat(0x3E2723),0,0.14,0.252);
+        m(getGeo('box',0.06,0.1,0.012),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),-0.15,0.18,0.251);
+        m(getGeo('box',0.06,0.1,0.012),getMat(0xFFE082,{emissive:0xFFB300,emissiveIntensity:0.5}),0.15,0.18,0.251);
+        m(getGeo('cyl',0.04,0.04,0.06,12),getMat(0xFFD54F),-0.26,0.07,0.32);
+        m(getGeo('cyl',0.04,0.04,0.06,12),getMat(0xFFD54F),0.26,0.07,0.32);
+        m(getGeo('box',0.62,0.02,0.012),getMat(0xF9A825),0,0.33,0.271);
+ }
       const baseMat = getMat(0xECEFF1);
       const body = new THREE.Mesh(getGeo('box', 0.6, 0.3, 0.5), baseMat);
       body.position.y = 0.18; g.add(body);
@@ -2761,6 +2907,13 @@ function createBuildingModel(type) {
       break;
     }
     case 'depot': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('box',0.28,0.14,0.16),getMat(0xE65100),0.34,0.22,-0.15);
+        m(getGeo('box',0.3,0.18,0.02),getMat(0x37474F),0,0.11,0.301);
+        m(getGeo('cyl',0.01,0.01,0.06,4),getMat(0x90A4AE),0.22,0.35,0.22);
+        m(getGeo('sphere',0.025,6,5),getMat(0xFF5252,{emissive:0x661111}),0.22,0.4,0.22);
+        m(getGeo('box',0.5,0.04,0.03),getMat(0xFFEB3B),0,0.06,0.305);
+ }
       const hub = new THREE.Mesh(getGeo('box', 0.6, 0.3, 0.6), getMat(0x546E7A));
       hub.position.y = 0.15; g.add(hub);
       const pad = new THREE.Mesh(getGeo('box', 0.46, 0.02, 0.46), getMat(0x37474F));
@@ -2793,6 +2946,15 @@ function createBuildingModel(type) {
       break;
     }
     case 'warehouse': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('box',0.34,0.4,0.02),getMat(0x37474F),0,0.2,0.351);
+        m(getGeo('box',0.34,0.012,0.024),getMat(0x263238),0,0.12,0.356);
+        m(getGeo('box',0.34,0.012,0.024),getMat(0x263238),0,0.22,0.356);
+        m(getGeo('box',0.34,0.012,0.024),getMat(0x263238),0,0.32,0.356);
+        m(getGeo('box',0.06,0.9,0.06),getMat(0xF9A825),0.35,0.45,0.35);
+        m(getGeo('cyl',0.05,0.05,0.08,8),getMat(0x455A64),-0.18,0.99,-0.18);
+        m(getGeo('cyl',0.065,0.065,0.02,8),getMat(0x263238),-0.18,1.04,-0.18);
+ }
       const tower = new THREE.Mesh(getGeo('box', 0.7, 0.9, 0.7), getMat(0x78909C));
       tower.position.y = 0.45; g.add(tower);
       const roof = new THREE.Mesh(getGeo('box', 0.74, 0.06, 0.74), getMat(0x455A64));
@@ -2818,6 +2980,11 @@ function createBuildingModel(type) {
       break;
     }
     case 'relay': {
+      { const m=(gg,mt,x,y,z,rz)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);if(rz)e.rotation.z=rz;g.add(e);return e;};
+        m(getGeo('box',0.12,0.1,0.12),getMat(0x455A64),0.22,0.06,0.22);
+        m(getGeo('sphere',0.012,6,5),getMat(0x4CAF50,{emissive:0x1B5E20}),0.22,0.12,0.22);
+        m(getGeo('cyl',0.004,0.004,0.6,4),getMat(0x37474F),0.14,0.34,0,-0.4);
+        m(getGeo('cyl',0.004,0.004,0.6,4),getMat(0x37474F),-0.14,0.34,0,0.4); }
       const baseMat = getMat(0x455A64);
       const mastMat = getMat(0x90A4AE);
       const base = new THREE.Mesh(getGeo('box', 0.34, 0.1, 0.34), baseMat);
@@ -2872,6 +3039,10 @@ function createBuildingModel(type) {
       break;
     }
     case 'battery': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('box',0.03,0.34,0.05),getMat(0x263238),-0.26,0.23,-0.1);
+        m(getGeo('box',0.03,0.34,0.05),getMat(0x263238),-0.26,0.23,0);
+        m(getGeo('box',0.03,0.34,0.05),getMat(0x263238),-0.26,0.23,0.1); }
       const body = new THREE.Mesh(getGeo('box', 0.5, 0.46, 0.38), getMat(0x37474F));
       body.position.y = 0.23; g.add(body);
       const trim = new THREE.Mesh(getGeo('box', 0.54, 0.05, 0.42), getMat(0x263238));
@@ -2959,6 +3130,14 @@ function createBuildingModel(type) {
       break;
     }
     case 'dronehub': {
+      { const m=(gg,mt,x,y,z)=>{const e=new THREE.Mesh(gg,mt);e.position.set(x,y,z);g.add(e);return e;};
+        m(getGeo('box',0.08,0.03,0.08),getMat(0x37474F),0,0.3,0);
+        m(getGeo('cyl',0.03,0.03,0.006,8),getMat(0x263238),0.06,0.31,0.06);
+        m(getGeo('cyl',0.03,0.03,0.006,8),getMat(0x263238),-0.06,0.31,0.06);
+        m(getGeo('cyl',0.03,0.03,0.006,8),getMat(0x263238),0.06,0.31,-0.06);
+        m(getGeo('cyl',0.03,0.03,0.006,8),getMat(0x263238),-0.06,0.31,-0.06);
+        m(getGeo('sphere',0.012,6,5),getMat(0x00E5FF,{emissive:0x00E5FF}),0.22,0.245,0.22);
+        m(getGeo('sphere',0.012,6,5),getMat(0x00E5FF,{emissive:0x00E5FF}),-0.22,0.245,-0.22); }
       const body = new THREE.Mesh(getGeo('box', 0.6, 0.22, 0.6), getMat(0x546E7A));
       body.position.y = 0.11; g.add(body);
       const pad = new THREE.Mesh(getGeo('box', 0.5, 0.02, 0.5), getMat(0x263238));

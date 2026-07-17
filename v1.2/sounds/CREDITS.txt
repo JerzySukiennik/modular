@@ -1,0 +1,3 @@
+Sound effects in this folder are from Kenney (kenney.nl) "Interface Sounds" pack.
+License: CC0 1.0 Universal (public domain dedication) — no attribution required.
+Converted to mono 22kHz MP3 for web use. Combat/ambient sounds in the game remain procedurally synthesized (Web Audio API).
